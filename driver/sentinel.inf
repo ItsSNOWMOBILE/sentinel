@@ -1,0 +1,53 @@
+; sentinel.inf — manual-install INF for the Sentinel kernel driver.
+; For testing: use sc.exe (see docs/setup.md).  This INF is provided for
+; completeness and for deployment via PnpUtil on test machines.
+
+[Version]
+Signature   = "$WINDOWS NT$"
+Class       = System
+ClassGuid   = {4D36E97D-E325-11CE-BFC1-08002BE10318}
+Provider    = %Vendor%
+DriverVer   = 01/01/2024,1.0.0.0
+PnpLockdown = 1
+
+[DestinationDirs]
+DefaultDestDir = 12  ; %SystemRoot%\System32\drivers
+
+[Manufacturer]
+%Vendor% = Models,NTamd64
+
+[Models.NTamd64]
+%DriverDesc% = SentinelInstall,root\sentinel
+
+[SentinelInstall]
+CopyFiles = Sentinel_CopyFiles
+
+[SentinelInstall.Services]
+AddService = sentinel,%SPSVCINST_ASSOCSERVICE%,SentinelService
+
+[SentinelService]
+DisplayName   = %ServiceDesc%
+ServiceType   = %SERVICE_KERNEL_DRIVER%
+StartType     = %SERVICE_DEMAND_START%
+ErrorControl  = %SERVICE_ERROR_NORMAL%
+ServiceBinary = %12%\sentinel.sys
+
+[Sentinel_CopyFiles]
+sentinel.sys
+
+[SourceDisksNames]
+1 = %DiskName%
+
+[SourceDisksFiles]
+sentinel.sys = 1
+
+[Strings]
+Vendor      = "ItsSNOWMOBILE"
+DriverDesc  = "Sentinel Process Protection Driver"
+ServiceDesc = "Sentinel Process Protection"
+DiskName    = "Sentinel Installation Media"
+
+SPSVCINST_ASSOCSERVICE = 0x00000002
+SERVICE_KERNEL_DRIVER  = 0x00000001
+SERVICE_DEMAND_START   = 0x00000003
+SERVICE_ERROR_NORMAL   = 0x00000001
