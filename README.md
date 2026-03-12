@@ -48,15 +48,11 @@ See [docs/architecture.md](docs/architecture.md).
 
 ## Build
 
-```
-# Open in Visual Studio 2022
-sentinel.sln
+Open `sentinel.sln` in Visual Studio 2022, select the **Release | x64**
+configuration, then **Build → Build Solution**.
 
-# Select Debug|x64, then:
-Build → Build Solution
-```
-
-Output lands in `bin\x64\Debug\`:  `sentinel.sys`, `sentinel-client.exe`.
+Output lands in `driver\x64\Release\` and `client\x64\Release\`:
+`sentinel.sys`, `sentinel-client.exe`.
 
 ## Installation
 
@@ -78,8 +74,8 @@ sentinel-client list
 
 ## Limitations
 
-See the [Limitations](docs/architecture.md#limitations) section of the
-architecture doc for a discussion of what this driver cannot protect
+See the [threat model](docs/architecture.md#threat-model) in the
+architecture doc for a full discussion of what this driver cannot protect
 against and known bypass techniques.
 
 ## License
