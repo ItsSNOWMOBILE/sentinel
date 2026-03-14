@@ -1,4 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!--
+  sentinel.vcxproj
+
+  Uses the standard v143 (VS 2022) toolset with explicit WDK paths and flags.
+  This replaces the WindowsKernelModeDriver10.0 platform toolset, which requires
+  a WDK VS extension that is not always installed.  The settings below replicate
+  what that toolset would inject automatically.
+-->
 <Project DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
 
   <ItemGroup Label="ProjectConfigurations">
@@ -14,31 +22,32 @@
 
   <PropertyGroup Label="Globals">
     <ProjectGuid>{3A6B7C8D-9E0F-1A2B-3C4D-5E6F7A8B9C0D}</ProjectGuid>
-    <TargetFrameworkVersion>v4.5</TargetFrameworkVersion>
     <MinimumVisualStudioVersion>17.0</MinimumVisualStudioVersion>
     <Configuration Condition="'$(Configuration)'==''">Debug</Configuration>
     <Platform Condition="'$(Platform)'==''">x64</Platform>
     <ProjectName>sentinel</ProjectName>
+    <!-- WDK install root — adjust if your WDK is in a non-default location. -->
+    <WDKRoot>C:\Program Files (x86)\Windows Kits\10</WDKRoot>
+    <WDKVersion>10.0.26100.0</WDKVersion>
   </PropertyGroup>
 
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
 
+  <!-- ── Configuration: Debug ─────────────────────────────────────────────── -->
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'" Label="Configuration">
-    <ConfigurationType>Driver</ConfigurationType>
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
     <UseDebugLibraries>true</UseDebugLibraries>
-    <PlatformToolset>WindowsKernelModeDriver10.0</PlatformToolset>
-    <DriverType>WDM</DriverType>
-    <TargetVersion>Windows10</TargetVersion>
-    <DriverTargetPlatform>Desktop</DriverTargetPlatform>
+    <PlatformToolset>v143</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
+    <!-- Output as .sys, not .dll -->
   </PropertyGroup>
 
+  <!-- ── Configuration: Release ───────────────────────────────────────────── -->
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'" Label="Configuration">
-    <ConfigurationType>Driver</ConfigurationType>
+    <ConfigurationType>DynamicLibrary</ConfigurationType>
     <UseDebugLibraries>false</UseDebugLibraries>
-    <PlatformToolset>WindowsKernelModeDriver10.0</PlatformToolset>
-    <DriverType>WDM</DriverType>
-    <TargetVersion>Windows10</TargetVersion>
-    <DriverTargetPlatform>Desktop</DriverTargetPlatform>
+    <PlatformToolset>v143</PlatformToolset>
+    <CharacterSet>Unicode</CharacterSet>
     <WholeProgramOptimization>true</WholeProgramOptimization>
   </PropertyGroup>
 
@@ -59,29 +68,110 @@
 
   <PropertyGroup Label="UserMacros" />
 
+  <!-- ── Output paths ─────────────────────────────────────────────────────── -->
   <PropertyGroup>
-    <OutDir>$(SolutionDir)bin\$(Platform)\$(Configuration)\</OutDir>
-    <IntDir>$(SolutionDir)obj\$(ProjectName)\$(Platform)\$(Configuration)\</IntDir>
+    <OutDir>$(MSBuildProjectDirectory)\bin\$(Platform)\$(Configuration)\</OutDir>
+    <IntDir>$(MSBuildProjectDirectory)\obj\$(Platform)\$(Configuration)\</IntDir>
     <TargetName>sentinel</TargetName>
+    <!-- DynamicLibrary config type would default to .dll; force .sys. -->
+    <TargetExt>.sys</TargetExt>
+    <!-- Manifests are a user-mode concept; suppress at the project level so
+         the MSBuild DLL targets do not inject /MANIFEST into the linker. -->
+    <GenerateManifest>false</GenerateManifest>
+    <EmbedManifest>false</EmbedManifest>
   </PropertyGroup>
 
+  <!-- ── WDK path macros ──────────────────────────────────────────────────── -->
+  <PropertyGroup>
+    <KMInclude>$(WDKRoot)\Include\$(WDKVersion)\km</KMInclude>
+    <SharedInclude>$(WDKRoot)\Include\$(WDKVersion)\shared</SharedInclude>
+    <KMLib>$(WDKRoot)\Lib\$(WDKVersion)\km\x64</KMLib>
+    <!-- Shared headers live one level above the driver project directory. -->
+    <SentinelSharedDir>$(MSBuildProjectDirectory)\..\shared</SentinelSharedDir>
+  </PropertyGroup>
+
+  <!-- ── Compiler settings ────────────────────────────────────────────────── -->
   <ItemDefinitionGroup>
     <ClCompile>
-      <AdditionalIncludeDirectories>$(SolutionDir)shared;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>_AMD64_;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>$(SentinelSharedDir);$(KMInclude);$(SharedInclude);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+
+      <!--
+        _AMD64_            : required by ntddk.h / wdm.h to select x64 definitions.
+        NTDDI_VERSION      : minimum OS version targeted (Win10).
+        _KERNEL_MODE       : intentionally omitted — /kernel sets it automatically;
+                             defining it manually triggers a reserved-name warning.
+      -->
+      <PreprocessorDefinitions>_AMD64_;NTDDI_VERSION=NTDDI_WIN10;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+
       <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
       <WarningLevel>Level4</WarningLevel>
+
+      <!-- Kernel code must not use C++ exceptions or RTTI. -->
+      <ExceptionHandling>false</ExceptionHandling>
+      <RuntimeTypeInfo>false</RuntimeTypeInfo>
+
+      <!--
+        /GS-  : stack-buffer security cookie is not available in kernel without
+                linking BufferOverflowK.lib.  We link it below, so /GS is fine,
+                but the kernel-mode version uses a different cookie check
+                function.  Disable to keep the build simple; re-enable and link
+                BufferOverflowK.lib for hardened builds.
+        /kernel : marks the object file as kernel-mode, enabling checks that
+                catch accidental use of user-mode intrinsics.
+        -d2epilogunwind : emits epilog unwind information required for x64
+                kernel drivers.
+      -->
+      <AdditionalOptions>/kernel -d2epilogunwind %(AdditionalOptions)</AdditionalOptions>
+      <BufferSecurityCheck>false</BufferSecurityCheck>
+
+      <!-- Do not link the user-mode CRT. -->
+      <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
     </ClCompile>
+
+    <!-- ── Linker settings ──────────────────────────────────────────────── -->
     <Link>
-      <!-- Required by ObRegisterCallbacks and PsSetCreateProcessNotifyRoutineEx -->
+      <AdditionalLibraryDirectories>$(KMLib);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+
+      <!--
+        ntoskrnl.lib : IoCreateDevice, ObRegisterCallbacks, Ps* routines, etc.
+        hal.lib      : KeInitializeSpinLock, KeAcquireSpinLock, etc. (on some
+                       builds these are inlined from ntoskrnl; link both to be safe).
+        wdm.lib      : thin import lib that re-exports the wdm subset of ntoskrnl.
+      -->
+      <!-- Explicit list only — no %(AdditionalDependencies) to avoid inheriting
+           the user-mode default libs (kernel32.lib, user32.lib, etc.) that the
+           v143 toolset adds by default for DLL projects. -->
+      <AdditionalDependencies>ntoskrnl.lib;hal.lib;wdm.lib</AdditionalDependencies>
+
+      <!-- No user-mode default libs in kernel space. -->
+      <IgnoreAllDefaultLibraries>true</IgnoreAllDefaultLibraries>
+
+      <!-- Kernel drivers use the native subsystem. -->
+      <SubSystem>Native</SubSystem>
+
+      <!-- /DRIVER:WDM sets the driver characteristic in the PE header. -->
+      <Driver>WDM</Driver>
+
+      <!-- Entry point must match DriverEntry's decorated name on x64 (no decoration). -->
+      <EntryPointSymbol>DriverEntry</EntryPointSymbol>
+
+      <!--
+        /INTEGRITYCHECK : sets IMAGE_DLLCHARACTERISTICS_FORCE_INTEGRITY in the PE
+                          header.  Required by ObRegisterCallbacks and
+                          PsSetCreateProcessNotifyRoutineEx on 64-bit Windows.
+      -->
       <IntegrityCheck>true</IntegrityCheck>
+
+      <!-- /kernel on the linker complements /kernel on the compiler.
+           /MANIFEST:NO explicitly suppresses the manifest in case MSBuild
+           targets override the project-level GenerateManifest=false. -->
+      <AdditionalOptions>/kernel /MANIFEST:NO %(AdditionalOptions)</AdditionalOptions>
+
+      <GenerateManifest>false</GenerateManifest>
     </Link>
-    <Inf>
-      <SpecifyArchitecture>true</SpecifyArchitecture>
-      <Arch>amd64</Arch>
-    </Inf>
   </ItemDefinitionGroup>
 
+  <!-- ── Source files ─────────────────────────────────────────────────────── -->
   <ItemGroup>
     <ClCompile Include="src\callbacks.c" />
     <ClCompile Include="src\device.c" />
@@ -98,7 +188,9 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Inf Include="sentinel.inf" />
+    <!-- INF is kept for reference; signing/packaging requires stampinf + inf2cat
+         which are part of the WDK tools, not MSBuild targets. -->
+    <None Include="sentinel.inf" />
   </ItemGroup>
 
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />

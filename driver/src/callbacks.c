@@ -3,6 +3,45 @@
 #include "process_list.h"
 
 /*
+ * Process and thread access-right constants.
+ *
+ * These are defined in um/winnt.h (user-mode SDK header) and are not pulled
+ * in by ntddk.h.  We replicate the values here directly; they are stable
+ * across all Windows versions that support ObRegisterCallbacks.
+ */
+#ifndef PROCESS_TERMINATE
+#define PROCESS_TERMINATE         0x0001
+#endif
+#ifndef PROCESS_CREATE_THREAD
+#define PROCESS_CREATE_THREAD     0x0002
+#endif
+#ifndef PROCESS_VM_OPERATION
+#define PROCESS_VM_OPERATION      0x0008
+#endif
+#ifndef PROCESS_VM_READ
+#define PROCESS_VM_READ           0x0010
+#endif
+#ifndef PROCESS_VM_WRITE
+#define PROCESS_VM_WRITE          0x0020
+#endif
+#ifndef PROCESS_DUP_HANDLE
+#define PROCESS_DUP_HANDLE        0x0040
+#endif
+#ifndef PROCESS_SUSPEND_RESUME
+#define PROCESS_SUSPEND_RESUME    0x0800
+#endif
+
+#ifndef THREAD_TERMINATE
+#define THREAD_TERMINATE          0x0001
+#endif
+#ifndef THREAD_SUSPEND_RESUME
+#define THREAD_SUSPEND_RESUME     0x0002
+#endif
+#ifndef THREAD_SET_CONTEXT
+#define THREAD_SET_CONTEXT        0x0010
+#endif
+
+/*
  * Access rights stripped from handles opened to a protected process by any
  * caller other than the process itself.
  */
