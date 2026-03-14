@@ -1,0 +1,127 @@
+name: Build and validate
+
+on:
+  push:
+    branches: ["master"]
+  pull_request:
+    branches: ["master"]
+
+jobs:
+  build:
+    name: Build (Release|x64)
+    runs-on: windows-2022
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ── Install WDK ──────────────────────────────────────────────────────────
+      #
+      # GitHub's windows-2022 runner ships VS 2022 Enterprise and the Windows
+      # SDK but not the WDK.  The silent installer (~700 MB) writes the km
+      # headers and libs to the standard path that sentinel.vcxproj references.
+      #
+      - name: Cache WDK installer
+        id: cache-wdk
+        uses: actions/cache@v4
+        with:
+          path: C:\wdksetup.exe
+          key: wdk-10.0.26100
+
+      - name: Download WDK installer
+        if: steps.cache-wdk.outputs.cache-hit != 'true'
+        run: |
+          Invoke-WebRequest `
+            -Uri "https://go.microsoft.com/fwlink/?linkid=2307001" `
+            -OutFile C:\wdksetup.exe
+        shell: pwsh
+
+      - name: Install WDK
+        run: |
+          Start-Process -Wait -FilePath C:\wdksetup.exe `
+            -ArgumentList "/quiet", "/norestart"
+        shell: pwsh
+
+      # ── Locate MSBuild ───────────────────────────────────────────────────────
+      #
+      # Use vswhere so the path is stable across VS editions (Community vs
+      # Enterprise) and minor version bumps.
+      #
+      - name: Locate MSBuild
+        id: msbuild
+        run: |
+          $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" `
+            -latest -requires Microsoft.Component.MSBuild `
+            -find MSBuild\**\Bin\MSBuild.exe
+          echo "path=$vs" >> $env:GITHUB_OUTPUT
+        shell: pwsh
+
+      # ── Build driver ─────────────────────────────────────────────────────────
+      - name: Build sentinel.sys
+        run: |
+          & "${{ steps.msbuild.outputs.path }}" `
+            driver\sentinel.vcxproj `
+            /p:Configuration=Release /p:Platform=x64 `
+            /m /nologo
+        shell: pwsh
+
+      # ── Build client ─────────────────────────────────────────────────────────
+      - name: Build sentinel-client.exe
+        run: |
+          & "${{ steps.msbuild.outputs.path }}" `
+            client\client.vcxproj `
+            /p:Configuration=Release /p:Platform=x64 `
+            /m /nologo
+        shell: pwsh
+
+      # ── Validate PE characteristics ──────────────────────────────────────────
+      #
+      # Checks that the linker set the flags required for the driver to load:
+      #
+      #   FORCE_INTEGRITY   required by ObRegisterCallbacks and
+      #                     PsSetCreateProcessNotifyRoutineEx; without it the
+      #                     kernel refuses to register the callbacks.
+      #
+      #   Subsystem Native  confirms the file is a kernel-mode binary, not a
+      #                     user-mode DLL accidentally built as one.
+      #
+      #   Entry point       must be DriverEntry; a wrong entry point (e.g. the
+      #                     CRT initialiser) causes an immediate bugcheck.
+      #
+      - name: Validate sentinel.sys PE headers
+        run: |
+          $dumpbin = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\*\bin\HostX64\x64\dumpbin.exe" `
+            /headers driver\bin\x64\Release\sentinel.sys 2>&1 |
+            Out-String
+
+          $errors = @()
+
+          if ($dumpbin -notmatch "FORCE_INTEGRITY") {
+            $errors += "FORCE_INTEGRITY characteristic is not set — ObRegisterCallbacks will fail at runtime"
+          }
+
+          if ($dumpbin -notmatch "(?i)subsystem.*native|native.*subsystem") {
+            $errors += "Subsystem is not NATIVE — binary was not linked as a kernel driver"
+          }
+
+          if ($dumpbin -notmatch "DriverEntry") {
+            $errors += "Entry point symbol 'DriverEntry' not found in headers"
+          }
+
+          if ($errors.Count -gt 0) {
+            $errors | ForEach-Object { Write-Error $_ }
+            exit 1
+          }
+
+          Write-Host "PE validation passed"
+        shell: pwsh
+
+      # ── Upload artefacts ─────────────────────────────────────────────────────
+      - name: Upload driver binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: sentinel-x64-release
+          path: |
+            driver/bin/x64/Release/sentinel.sys
+            driver/bin/x64/Release/sentinel.pdb
+            client/bin/x64/Release/sentinel-client.exe
+          if-no-files-found: error
