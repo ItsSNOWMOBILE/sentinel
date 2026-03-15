@@ -48,36 +48,30 @@ jobs:
         run: nuget restore packages.config -PackagesDirectory packages
         shell: pwsh
 
-      # ── Debug: show package directory layout ────────────────────────────────
-      - name: Inspect NuGet package structure
-        run: |
-          Get-ChildItem packages -Recurse -Depth 3 | Select-Object FullName
-        shell: pwsh
-
       # ── Resolve package paths ────────────────────────────────────────────────
       #
-      # Locate the installed package directories and expose the three MSBuild
-      # property overrides that sentinel.vcxproj expects.
+      # NuGet packages place content under a c\ subdirectory:
+      #   Microsoft.Windows.WDK.x64\c\Include\10.0.26100.0\km\
+      #   Microsoft.Windows.WDK.x64\c\Lib\10.0.26100.0\km\x64\
+      #   Microsoft.Windows.SDK.CPP\c\Include\10.0.26100.0\shared\
       #
       - name: Resolve WDK paths
         id: wdk
         run: |
-          $wdk = (Get-ChildItem packages -Filter "Microsoft.Windows.WDK.x64.*"     -Directory).FullName
-          $sdk = (Get-ChildItem packages -Filter "Microsoft.Windows.SDK.CPP.x64.*" -Directory).FullName
-          $shr = (Get-ChildItem packages -Filter "Microsoft.Windows.SDK.CPP.*"     -Directory |
-                  Where-Object { $_.Name -notmatch "x64|arm|x86" }).FullName
+          $wdk = (Get-ChildItem packages -Filter "Microsoft.Windows.WDK.x64.*" -Directory).FullName
+          $shr = (Get-ChildItem packages -Filter "Microsoft.Windows.SDK.CPP.*" -Directory |
+                  Where-Object { $_.Name -notmatch "\.x64\.|\.arm\.|\.x86\." }).FullName
 
-          # The internal include/lib path uses the base SDK build number.
-          $ver = (Get-ChildItem "$wdk\include" -Directory | Select-Object -First 1).Name
+          $ver = (Get-ChildItem "$wdk\c\Include" -Directory | Select-Object -First 1).Name
 
-          "km_include=$wdk\include\$ver\km"      | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "shared_include=$shr\include\$ver\shared" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "km_lib=$wdk\lib\$ver\km\x64"          | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "km_include=$wdk\c\Include\$ver\km"       | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "shared_include=$shr\c\Include\$ver\shared" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "km_lib=$wdk\c\Lib\$ver\km\x64"           | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
           Write-Host "WDK version : $ver"
-          Write-Host "KM include  : $wdk\include\$ver\km"
-          Write-Host "Shared inc  : $shr\include\$ver\shared"
-          Write-Host "KM lib      : $wdk\lib\$ver\km\x64"
+          Write-Host "KM include  : $wdk\c\Include\$ver\km"
+          Write-Host "Shared inc  : $shr\c\Include\$ver\shared"
+          Write-Host "KM lib      : $wdk\c\Lib\$ver\km\x64"
         shell: pwsh
 
       # ── Build driver ─────────────────────────────────────────────────────────
