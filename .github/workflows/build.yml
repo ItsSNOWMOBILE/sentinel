@@ -48,6 +48,12 @@ jobs:
         run: nuget restore packages.config -PackagesDirectory packages
         shell: pwsh
 
+      # ── Debug: show package directory layout ────────────────────────────────
+      - name: Inspect NuGet package structure
+        run: |
+          Get-ChildItem packages -Recurse -Depth 3 | Select-Object FullName
+        shell: pwsh
+
       # ── Resolve package paths ────────────────────────────────────────────────
       #
       # Locate the installed package directories and expose the three MSBuild
