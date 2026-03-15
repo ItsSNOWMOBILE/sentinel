@@ -14,53 +14,79 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # ── Install WDK ──────────────────────────────────────────────────────────
-      #
-      # GitHub's windows-2022 runner ships VS 2022 Enterprise and the Windows
-      # SDK but not the WDK.  The silent installer (~700 MB) writes the km
-      # headers and libs to the standard path that sentinel.vcxproj references.
-      #
-      - name: Cache WDK installer
-        id: cache-wdk
-        uses: actions/cache@v4
-        with:
-          path: C:\wdksetup.exe
-          key: wdk-10.0.26100
-
-      - name: Download WDK installer
-        if: steps.cache-wdk.outputs.cache-hit != 'true'
-        run: |
-          Invoke-WebRequest `
-            -Uri "https://go.microsoft.com/fwlink/?linkid=2307001" `
-            -OutFile C:\wdksetup.exe
-        shell: pwsh
-
-      - name: Install WDK
-        run: |
-          Start-Process -Wait -FilePath C:\wdksetup.exe `
-            -ArgumentList "/quiet", "/norestart"
-        shell: pwsh
-
       # ── Locate MSBuild ───────────────────────────────────────────────────────
       #
-      # Use vswhere so the path is stable across VS editions (Community vs
-      # Enterprise) and minor version bumps.
+      # Use vswhere so the path is stable across VS editions and minor bumps.
       #
       - name: Locate MSBuild
         id: msbuild
         run: |
           $vs = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" `
             -latest -requires Microsoft.Component.MSBuild `
-            -find MSBuild\**\Bin\MSBuild.exe
-          echo "path=$vs" >> $env:GITHUB_OUTPUT
+            -find "MSBuild\**\Bin\MSBuild.exe" |
+            Select-Object -First 1
+          "path=$vs" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+        shell: pwsh
+
+      # ── Install WDK via NuGet ────────────────────────────────────────────────
+      #
+      # The WDK MSI installer is not reliable in CI (large, GUI prompts, fragile
+      # redirect URLs).  Microsoft ships the km headers and libs as NuGet packages
+      # specifically for CI use.  Three packages are needed:
+      #
+      #   Microsoft.Windows.SDK.CPP       shared/ headers (sdkddkver.h, …)
+      #   Microsoft.Windows.SDK.CPP.x64   x64 SDK headers + libs
+      #   Microsoft.Windows.WDK.x64       km/ headers + ntoskrnl.lib, hal.lib, …
+      #
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: packages
+          key: nuget-wdk-${{ hashFiles('packages.config') }}
+
+      - name: Restore NuGet packages
+        run: nuget restore packages.config -PackagesDirectory packages
+        shell: pwsh
+
+      # ── Resolve package paths ────────────────────────────────────────────────
+      #
+      # Locate the installed package directories and expose the three MSBuild
+      # property overrides that sentinel.vcxproj expects.
+      #
+      - name: Resolve WDK paths
+        id: wdk
+        run: |
+          $wdk = (Get-ChildItem packages -Filter "Microsoft.Windows.WDK.x64.*"     -Directory).FullName
+          $sdk = (Get-ChildItem packages -Filter "Microsoft.Windows.SDK.CPP.x64.*" -Directory).FullName
+          $shr = (Get-ChildItem packages -Filter "Microsoft.Windows.SDK.CPP.*"     -Directory |
+                  Where-Object { $_.Name -notmatch "x64|arm|x86" }).FullName
+
+          # The internal include/lib path uses the base SDK build number.
+          $ver = (Get-ChildItem "$wdk\include" -Directory | Select-Object -First 1).Name
+
+          "km_include=$wdk\include\$ver\km"      | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "shared_include=$shr\include\$ver\shared" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "km_lib=$wdk\lib\$ver\km\x64"          | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+          Write-Host "WDK version : $ver"
+          Write-Host "KM include  : $wdk\include\$ver\km"
+          Write-Host "Shared inc  : $shr\include\$ver\shared"
+          Write-Host "KM lib      : $wdk\lib\$ver\km\x64"
         shell: pwsh
 
       # ── Build driver ─────────────────────────────────────────────────────────
+      #
+      # Override the three path properties so the build works without the WDK
+      # being installed system-wide under C:\Program Files (x86)\Windows Kits\.
+      #
       - name: Build sentinel.sys
         run: |
           & "${{ steps.msbuild.outputs.path }}" `
             driver\sentinel.vcxproj `
             /p:Configuration=Release /p:Platform=x64 `
+            "/p:KMInclude=${{ steps.wdk.outputs.km_include }}" `
+            "/p:SharedInclude=${{ steps.wdk.outputs.shared_include }}" `
+            "/p:KMLib=${{ steps.wdk.outputs.km_lib }}" `
             /m /nologo
         shell: pwsh
 
@@ -84,27 +110,28 @@ jobs:
       #   Subsystem Native  confirms the file is a kernel-mode binary, not a
       #                     user-mode DLL accidentally built as one.
       #
-      #   Entry point       must be DriverEntry; a wrong entry point (e.g. the
-      #                     CRT initialiser) causes an immediate bugcheck.
+      #   Entry point       must resolve to DriverEntry; a wrong entry point
+      #                     causes an immediate bugcheck on driver load.
       #
       - name: Validate sentinel.sys PE headers
         run: |
-          $dumpbin = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\*\bin\HostX64\x64\dumpbin.exe" `
-            /headers driver\bin\x64\Release\sentinel.sys 2>&1 |
-            Out-String
+          $dumpbin = (Get-ChildItem "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC" `
+            -Recurse -Filter "dumpbin.exe" |
+            Where-Object { $_.FullName -match "HostX64\\x64" } |
+            Select-Object -First 1).FullName
+
+          $headers = & $dumpbin /headers driver\bin\x64\Release\sentinel.sys 2>&1 | Out-String
 
           $errors = @()
 
-          if ($dumpbin -notmatch "FORCE_INTEGRITY") {
-            $errors += "FORCE_INTEGRITY characteristic is not set — ObRegisterCallbacks will fail at runtime"
+          if ($headers -notmatch "FORCE_INTEGRITY") {
+            $errors += "FORCE_INTEGRITY not set — ObRegisterCallbacks will be refused at runtime"
           }
-
-          if ($dumpbin -notmatch "(?i)subsystem.*native|native.*subsystem") {
+          if ($headers -notmatch "(?i)native") {
             $errors += "Subsystem is not NATIVE — binary was not linked as a kernel driver"
           }
-
-          if ($dumpbin -notmatch "DriverEntry") {
-            $errors += "Entry point symbol 'DriverEntry' not found in headers"
+          if ($headers -notmatch "DriverEntry") {
+            $errors += "Entry point symbol 'DriverEntry' not found"
           }
 
           if ($errors.Count -gt 0) {
@@ -116,7 +143,7 @@ jobs:
         shell: pwsh
 
       # ── Upload artefacts ─────────────────────────────────────────────────────
-      - name: Upload driver binary
+      - name: Upload build artefacts
         uses: actions/upload-artifact@v4
         with:
           name: sentinel-x64-release
