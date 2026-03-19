@@ -115,10 +115,13 @@ jobs:
       #
       - name: Validate sentinel.sys PE headers
         run: |
-          $dumpbin = (Get-ChildItem "${env:ProgramFiles(x86)}\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC" `
+          $vsRoot = & "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" `
+            -latest -requires Microsoft.Component.MSBuild -property installationPath
+          $dumpbin = Get-ChildItem "$vsRoot\VC\Tools\MSVC" `
             -Recurse -Filter "dumpbin.exe" |
             Where-Object { $_.FullName -match "HostX64\\x64" } |
-            Select-Object -First 1).FullName
+            Select-Object -First 1 |
+            Select-Object -ExpandProperty FullName
 
           $headers = & $dumpbin /headers driver\bin\x64\Release\sentinel.sys 2>&1 | Out-String
 
