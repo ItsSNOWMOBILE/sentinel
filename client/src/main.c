@@ -94,9 +94,9 @@ cmd_protect(const char *pid_str)
                          NULL, 0, &bytes, NULL))
     {
         DWORD err = GetLastError();
-        if (err == ERROR_OBJECT_NAME_COLLISION)
+        if (err == ERROR_ALREADY_EXISTS)
             fprintf(stderr, "notice: PID %lu is already protected\n", pid);
-        else if (err == ERROR_QUOTA_EXCEEDED)
+        else if (err == ERROR_NOT_ENOUGH_QUOTA)
             fprintf(stderr,
                 "error: protected-process list is full "
                 "(%u entries maximum)\n", SENTINEL_MAX_PIDS);
