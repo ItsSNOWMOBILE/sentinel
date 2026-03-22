@@ -156,16 +156,18 @@
       <EntryPointSymbol>DriverEntry</EntryPointSymbol>
 
       <!--
-        /INTEGRITYCHECK : sets IMAGE_DLLCHARACTERISTICS_FORCE_INTEGRITY in the PE
-                          header.  Required by ObRegisterCallbacks and
-                          PsSetCreateProcessNotifyRoutineEx on 64-bit Windows.
+        /kernel        : complements /kernel on the compiler.
+        /INTEGRITYCHECK: sets IMAGE_DLLCHARACTERISTICS_FORCE_INTEGRITY in the
+                         PE header.  Required by ObRegisterCallbacks and
+                         PsSetCreateProcessNotifyRoutineEx; the kernel will
+                         refuse to register callbacks without it.
+                         NOTE: <IntegrityCheck>true</IntegrityCheck> is only
+                         honoured by the WDK platform toolset, not v143 — the
+                         flag must be passed explicitly here.
+        /MANIFEST:NO   : suppress the manifest; /MANIFEST is incompatible with
+                         /DRIVER:WDM (LNK1295).
       -->
-      <IntegrityCheck>true</IntegrityCheck>
-
-      <!-- /kernel on the linker complements /kernel on the compiler.
-           /MANIFEST:NO explicitly suppresses the manifest in case MSBuild
-           targets override the project-level GenerateManifest=false. -->
-      <AdditionalOptions>/kernel /MANIFEST:NO %(AdditionalOptions)</AdditionalOptions>
+      <AdditionalOptions>/kernel /INTEGRITYCHECK /MANIFEST:NO %(AdditionalOptions)</AdditionalOptions>
 
       <GenerateManifest>false</GenerateManifest>
     </Link>
