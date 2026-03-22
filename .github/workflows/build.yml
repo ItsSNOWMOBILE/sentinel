@@ -125,6 +125,10 @@ jobs:
 
           $headers = & $dumpbin /headers driver\bin\x64\Release\sentinel.sys 2>&1 | Out-String
 
+          Write-Host "=== dumpbin /headers output ==="
+          Write-Host $headers
+          Write-Host "================================"
+
           $errors = @()
 
           if ($headers -notmatch "FORCE_INTEGRITY") {
