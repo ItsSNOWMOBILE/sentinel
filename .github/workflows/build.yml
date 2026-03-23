@@ -125,16 +125,14 @@ jobs:
 
           $headers = & $dumpbin /headers driver\bin\x64\Release\sentinel.sys 2>&1 | Out-String
 
-          Write-Host "=== dumpbin /headers output ==="
-          Write-Host $headers
-          Write-Host "================================"
-
           $errors = @()
 
-          if ($headers -notmatch "FORCE_INTEGRITY") {
-            $errors += "FORCE_INTEGRITY not set — ObRegisterCallbacks will be refused at runtime"
+          # dumpbin renders IMAGE_DLLCHARACTERISTICS_FORCE_INTEGRITY (0x0080) as
+          # "Check integrity", not "FORCE_INTEGRITY".
+          if ($headers -notmatch "Check integrity") {
+            $errors += "FORCE_INTEGRITY (Check integrity) not set — ObRegisterCallbacks will be refused at runtime"
           }
-          if ($headers -notmatch "(?i)native") {
+          if ($headers -notmatch "(?i)subsystem \(Native\)") {
             $errors += "Subsystem is not NATIVE — binary was not linked as a kernel driver"
           }
           if ($headers -notmatch "DriverEntry") {
